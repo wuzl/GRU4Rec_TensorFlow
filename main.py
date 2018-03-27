@@ -12,9 +12,6 @@ import argparse
 import model
 import evaluation
 
-PATH_TO_TRAIN = '/PATH/TO/rsc15_train_full.txt'
-PATH_TO_TEST = '/PATH/TO/rsc15_test.txt'
-
 class Args():
     is_training = False
     layers = 1
@@ -33,7 +30,7 @@ class Args():
     time_key = 'Time'
     grad_cap = 0
     test_model = 2
-    checkpoint_dir = './checkpoint'
+    checkpoint_path = './data/checkpoint'
     loss = 'cross-entropy'
     final_act = 'softmax'
     hidden_act = 'tanh'
@@ -43,6 +40,11 @@ def parseArgs():
     parser = argparse.ArgumentParser(description='GRU4Rec args')
     parser.add_argument('--layer', default=1, type=int)
     parser.add_argument('--size', default=100, type=int)
+    parser.add_argument('--batch', default=50, type=int)
+    parser.add_argument('--top', default=50, type=int)
+    parser.add_argument('--train_path', default='data/rsc15_train_full.txt.14', type=str)
+    parser.add_argument('--test_path', default='data/rsc15_test.txt.8', type=str)
+    parser.add_argument('--checkpoint_path', default='data/checkpoint', type=str)
     parser.add_argument('--epoch', default=3, type=int)
     parser.add_argument('--lr', default=0.001, type=float)
     parser.add_argument('--train', default=1, type=int)
@@ -57,12 +59,15 @@ def parseArgs():
 
 if __name__ == '__main__':
     command_line = parseArgs()
-    data = pd.read_csv(PATH_TO_TRAIN, sep='\t', dtype={'ItemId': np.int64})
-    valid = pd.read_csv(PATH_TO_TEST, sep='\t', dtype={'ItemId': np.int64})
+    data = pd.read_csv(command_line.train_path, sep='\t', dtype={'ItemId': np.int64})
+    valid = pd.read_csv(command_line.test_path, sep='\t', dtype={'ItemId': np.int64})
+    top = command_line.top
     args = Args()
     args.n_items = len(data['ItemId'].unique())
     args.layers = command_line.layer
     args.rnn_size = command_line.size
+    args.batch_size = command_line.batch
+    args.checkpoint_path = command_line.checkpoint_path
     args.n_epochs = command_line.epoch
     args.learning_rate = command_line.lr
     args.is_training = command_line.train
@@ -72,8 +77,8 @@ if __name__ == '__main__':
     args.loss = command_line.loss
     args.dropout_p_hidden = 1.0 if args.is_training == 0 else command_line.dropout
     print(args.dropout_p_hidden)
-    if not os.path.exists(args.checkpoint_dir):
-        os.mkdir(args.checkpoint_dir)
+    if not os.path.exists(args.checkpoint_path):
+        os.mkdir(args.checkpoint_path)
     gpu_config = tf.ConfigProto()
     gpu_config.gpu_options.allow_growth = True
     with tf.Session(config=gpu_config) as sess:
@@ -81,5 +86,5 @@ if __name__ == '__main__':
         if args.is_training:
             gru.fit(data)
         else:
-            res = evaluation.evaluate_sessions_batch(gru, data, valid)
-            print('Recall@20: {}\tMRR@20: {}'.format(res[0], res[1]))
+            res = evaluation.evaluate_sessions_batch(gru, data, valid, batch_size=args.batch_size, cut_off=top)
+            print('Precision@{}: {}\tMRR@{}: {}'.format(top, res[0], top, res[1]))

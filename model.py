@@ -10,11 +10,9 @@ import pandas as pd
 import numpy as np
 
 class GRU4Rec:
-    
     def __init__(self, sess, args):
         self.sess = sess
         self.is_training = args.is_training
-
         self.layers = args.layers
         self.rnn_size = args.rnn_size
         self.n_epochs = args.n_epochs
@@ -63,8 +61,8 @@ class GRU4Rec:
         else:
             raise NotImplementedError
 
-        self.checkpoint_dir = args.checkpoint_dir
-        if not os.path.isdir(self.checkpoint_dir):
+        self.checkpoint_path = args.checkpoint_path
+        if not os.path.isdir(self.checkpoint_path):
             raise Exception("[!] Checkpoint Dir not found")
 
         self.build_model()
@@ -76,9 +74,9 @@ class GRU4Rec:
 
         # use self.predict_state to hold hidden states during prediction. 
         self.predict_state = [np.zeros([self.batch_size, self.rnn_size], dtype=np.float32) for _ in xrange(self.layers)]
-        ckpt = tf.train.get_checkpoint_state(self.checkpoint_dir)
+        ckpt = tf.train.get_checkpoint_state(self.checkpoint_path)
         if ckpt and ckpt.model_checkpoint_path:
-            self.saver.restore(sess, '{}/gru-model-{}'.format(self.checkpoint_dir, args.test_model))
+            self.saver.restore(sess, '{}/gru-model-{}'.format(self.checkpoint_path, args.test_model))
 
     ########################ACTIVATION FUNCTIONS#########################
     def linear(self, X):
@@ -107,7 +105,6 @@ class GRU4Rec:
         return tf.reduce_mean(term1 - term2)
 
     def build_model(self):
-        
         self.X = tf.placeholder(tf.int32, [self.batch_size], name='input')
         self.Y = tf.placeholder(tf.int32, [self.batch_size], name='output')
         self.state = [tf.placeholder(tf.float32, [self.batch_size, self.rnn_size], name='rnn_state') for _ in xrange(self.layers)]
@@ -119,15 +116,15 @@ class GRU4Rec:
                 initializer = tf.random_normal_initializer(mean=0, stddev=sigma)
             else:
                 initializer = tf.random_uniform_initializer(minval=-sigma, maxval=sigma)
-            embedding = tf.get_variable('embedding', [self.n_items, self.rnn_size], initializer=initializer)
-            softmax_W = tf.get_variable('softmax_w', [self.n_items, self.rnn_size], initializer=initializer)
-            softmax_b = tf.get_variable('softmax_b', [self.n_items], initializer=tf.constant_initializer(0.0))
+            self.embedding = tf.get_variable('embedding', [self.n_items, self.rnn_size], initializer=initializer)
+            self.softmax_W = tf.get_variable('softmax_w', [self.n_items, self.rnn_size], initializer=initializer)
+            self.softmax_b = tf.get_variable('softmax_b', [self.n_items], initializer=tf.constant_initializer(0.0))
 
             cell = rnn_cell.GRUCell(self.rnn_size, activation=self.hidden_act)
             drop_cell = rnn_cell.DropoutWrapper(cell, output_keep_prob=self.dropout_p_hidden)
             stacked_cell = rnn_cell.MultiRNNCell([drop_cell] * self.layers)
             
-            inputs = tf.nn.embedding_lookup(embedding, self.X)
+            inputs = tf.nn.embedding_lookup(self.embedding, self.X)
             output, state = stacked_cell(inputs, tuple(self.state))
             self.final_state = state
 
@@ -135,27 +132,20 @@ class GRU4Rec:
             '''
             Use other examples of the minibatch as negative samples.
             '''
-            sampled_W = tf.nn.embedding_lookup(softmax_W, self.Y)
-            sampled_b = tf.nn.embedding_lookup(softmax_b, self.Y)
+            sampled_W = tf.nn.embedding_lookup(self.softmax_W, self.Y)
+            sampled_b = tf.nn.embedding_lookup(self.softmax_b, self.Y)
             logits = tf.matmul(output, sampled_W, transpose_b=True) + sampled_b
             self.yhat = self.final_activation(logits)
             self.cost = self.loss_function(self.yhat)
         else:
-            logits = tf.matmul(output, softmax_W, transpose_b=True) + softmax_b
+            logits = tf.matmul(output, self.softmax_W, transpose_b=True) + self.softmax_b
             self.yhat = self.final_activation(logits)
 
         if not self.is_training:
             return
 
         self.lr = tf.maximum(1e-5,tf.train.exponential_decay(self.learning_rate, self.global_step, self.decay_steps, self.decay, staircase=True)) 
-        
-        '''
-        Try different optimizers.
-        '''
-        #optimizer = tf.train.AdagradOptimizer(self.lr)
         optimizer = tf.train.AdamOptimizer(self.lr)
-        #optimizer = tf.train.AdadeltaOptimizer(self.lr)
-        #optimizer = tf.train.RMSPropOptimizer(self.lr)
 
         tvars = tf.trainable_variables()
         gvs = optimizer.compute_gradients(self.cost, tvars)
@@ -176,11 +166,15 @@ class GRU4Rec:
         itemids = data[self.item_key].unique()
         self.n_items = len(itemids)
         self.itemidmap = pd.Series(data=np.arange(self.n_items), index=itemids)
+        #print 'itemids, itemidmap:', zip(itemids, self.itemidmap)
         data = pd.merge(data, pd.DataFrame({self.item_key:itemids, 'ItemIdx':self.itemidmap[itemids].values}), on=self.item_key, how='inner')
         offset_sessions = self.init(data)
+        #print 'train_data:', data
+        #print 'offset_session:', offset_sessions
         print('fitting model...')
         for epoch in xrange(self.n_epochs):
             epoch_cost = []
+            step, lr = 0, self.lr
             state = [np.zeros([self.batch_size, self.rnn_size], dtype=np.float32) for _ in xrange(self.layers)]
             session_idx_arr = np.arange(len(offset_sessions)-1)
             iters = np.arange(self.batch_size)
@@ -191,6 +185,7 @@ class GRU4Rec:
             while not finished:
                 minlen = (end-start).min()
                 out_idx = data.ItemIdx.values[start]
+                #print 'start, end, minlen:', start, end, minlen
                 for i in range(minlen-1):
                     in_idx = out_idx
                     out_idx = data.ItemIdx.values[start+i+1]
@@ -199,21 +194,21 @@ class GRU4Rec:
                     feed_dict = {self.X: in_idx, self.Y: out_idx}
                     for j in xrange(self.layers): 
                         feed_dict[self.state[j]] = state[j]
-                    
                     cost, state, step, lr, _ = self.sess.run(fetches, feed_dict)
                     epoch_cost.append(cost)
+                    #print 'i_of_minlen, in, out, cost:', i, in_idx, out_idx, cost
                     if np.isnan(cost):
                         print(str(epoch) + ':Nan error!')
                         self.error_during_train = True
                         return
-                    if step == 1 or step % self.decay_steps == 0:
-                        avgc = np.mean(epoch_cost)
-                        print('Epoch {}\tStep {}\tlr: {:.6f}\tloss: {:.6f}'.format(epoch, step, lr, avgc))
                 start = start+minlen-1
                 mask = np.arange(len(iters))[(end-start)<=1]
+                #print 'start, end, mask:', start, end, mask
                 for idx in mask:
                     maxiter += 1
+                    #print 'maxiter, offset_sessions, session_idx_arr:', maxiter, offset_sessions, session_idx_arr
                     if maxiter >= len(offset_sessions)-1:
+                        #当训练样本不足一个batch,结束
                         finished = True
                         break
                     iters[idx] = maxiter
@@ -228,7 +223,18 @@ class GRU4Rec:
                 print('Epoch {}: Nan error!'.format(epoch, avgc))
                 self.error_during_train = True
                 return
-            self.saver.save(self.sess, '{}/gru-model'.format(self.checkpoint_dir), global_step=epoch)
+            print('Epoch {}\tStep {}\tlr: {:.6f}\tloss: {:.6f}'.format(epoch, step, lr, avgc))
+            self.saver.save(self.sess, '{}/gru-model'.format(self.checkpoint_path), global_step=epoch)
+            id2item = dict(zip(self.itemidmap, itemids))
+            with open(os.path.join(self.checkpoint_path, 'embedding_%s' % epoch), 'w') as f:
+                item_embedding = self.sess.run(self.embedding)
+                for index, vec in enumerate(item_embedding.tolist()):
+                    print >>f, str(id2item[index]) + '\t' + '|'.join(map(str, vec))
+            with open(os.path.join(self.checkpoint_path, 'w_%s' % epoch), 'w') as f:
+                w = self.sess.run(self.softmax_W)
+                for index, vec in enumerate(w.tolist()):
+                    print >>f, str(id2item[index]) + '\t' + '|'.join(map(str, vec))
+
     
     def predict_next_batch(self, session_ids, input_item_ids, itemidmap, batch=50):
         '''
@@ -273,4 +279,3 @@ class GRU4Rec:
         preds, self.predict_state = self.sess.run(fetches, feed_dict)
         preds = np.asarray(preds).T
         return pd.DataFrame(data=preds, index=itemidmap.index)
-

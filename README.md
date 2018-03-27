@@ -11,6 +11,14 @@ Numpy 1.12.1 or later
 TensorFlow: 0.12.1
 
 # Usage
+Get dataset
+
+    $ cd data
+    $ curl -Lo yoochoose-data.7z https://s3-eu-west-1.amazonaws.com/yc-rdata/yoochoose-data.7z
+    $ 7za x yoochoose-data.7z
+    $ cd ..
+    $ python3 preprocess.py
+
 Train/Test file should consists of three columns:   
 
      First column: SessionId  
@@ -19,7 +27,8 @@ Train/Test file should consists of three columns:
 
 To train a model with default parameter settings:
 
-    $ python main.py    
+    $ python main.py --size 3 --batch 2 --epoch 100 --train_path data/rsc15_train_full.txt.14 --test_path data/rsc15_test.txt.8
+    $ python main.py --size 200 --batch 5000 --epoch 25 --train_path data/UT.train.seq.csv --test_path data/UT.test.seq.csv --checkpoint_path data/checkpoint --lr 0.005
 
     Other optional parameters include:   
      --layer: Number of GRU layers. Default is 1.  
@@ -34,7 +43,8 @@ To train a model with default parameter settings:
 
 To evaluate a trained model:
 
-    $ python main.py --train 0
+    $ python main.py --size 3 --batch 2 --top 3 --train 0 --test 99  --train_path data/rsc15_train_full.txt.14 --test_path data/rsc15_test.txt.8
+    $ python main.py --size 200 --batch 100 --top 50 --train 0 --test 24 --train_path data/UT.train.seq.csv --test_path data/UT.test.seq.csv --checkpoint_path data/checkpoint
     
     One optional parameter is:    
      --test: Specify which saved model to evaluate(only used when --train is 0). Default is 2.
