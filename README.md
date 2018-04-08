@@ -27,8 +27,8 @@ Train/Test file should consists of three columns:
 
 To train a model with default parameter settings:
 
-    $ python main.py --size 3 --batch 2 --epoch 100 --train_path data/rsc15_train_full.txt.14 --test_path data/rsc15_test.txt.8
-    $ python main.py --size 200 --batch 5000 --epoch 25 --train_path data/UT.train.seq.csv --test_path data/UT.test.seq.csv --checkpoint_path data/checkpoint --lr 0.005
+    $ python main.py --size 3 --batch 2 --epoch 100 --train_path data/rsc15_train_full.txt.14 --test_path data/rsc15_test.txt.8 --lr 0.01 --dropout 1
+    $ python main.py --layer 2 --size 200 --batch 5000 --lr 0.001 --dropout 0.8 --epoch 25 --train_path data/UT.train.seq.csv --test_path data/UT.test.seq.csv --checkpoint_path data/checkpoint
 
     Other optional parameters include:   
      --layer: Number of GRU layers. Default is 1.  
@@ -44,7 +44,7 @@ To train a model with default parameter settings:
 To evaluate a trained model:
 
     $ python main.py --size 3 --batch 2 --top 3 --train 0 --test 99  --train_path data/rsc15_train_full.txt.14 --test_path data/rsc15_test.txt.8
-    $ python main.py --size 200 --batch 100 --top 50 --train 0 --test 24 --train_path data/UT.train.seq.csv --test_path data/UT.test.seq.csv --checkpoint_path data/checkpoint
+    $ python main.py --layer 2 --size 200 --batch 100 --top 50 --train 0 --test 24 --train_path data/UT.train.seq.csv --test_path data/UT.test.seq.csv --checkpoint_path data/checkpoint
     
     One optional parameter is:    
      --test: Specify which saved model to evaluate(only used when --train is 0). Default is 2.

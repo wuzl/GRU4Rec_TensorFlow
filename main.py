@@ -18,6 +18,7 @@ class Args():
     rnn_size = 100
     n_epochs = 3
     batch_size = 50
+    seed = 13
     dropout_p_hidden=1
     learning_rate = 0.001
     decay = 0.96
@@ -41,6 +42,7 @@ def parseArgs():
     parser.add_argument('--layer', default=1, type=int)
     parser.add_argument('--size', default=100, type=int)
     parser.add_argument('--batch', default=50, type=int)
+    parser.add_argument('--seed', default=13, type=int)
     parser.add_argument('--top', default=50, type=int)
     parser.add_argument('--train_path', default='data/rsc15_train_full.txt.14', type=str)
     parser.add_argument('--test_path', default='data/rsc15_test.txt.8', type=str)
@@ -67,6 +69,7 @@ if __name__ == '__main__':
     args.layers = command_line.layer
     args.rnn_size = command_line.size
     args.batch_size = command_line.batch
+    args.seed = command_line.seed
     args.checkpoint_path = command_line.checkpoint_path
     args.n_epochs = command_line.epoch
     args.learning_rate = command_line.lr

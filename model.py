@@ -11,6 +11,8 @@ import numpy as np
 
 class GRU4Rec:
     def __init__(self, sess, args):
+        np.random.seed(args.seed)
+        tf.set_random_seed(args.seed)
         self.sess = sess
         self.is_training = args.is_training
         self.layers = args.layers
@@ -130,7 +132,7 @@ class GRU4Rec:
 
         if self.is_training:
             '''
-            Use other examples of the minibatch as negative samples.
+            Use other examples of the minibatch as negative samples. 每个样本会与这个batch里的所有y计算score,然后得到softmax
             '''
             sampled_W = tf.nn.embedding_lookup(self.softmax_W, self.Y)
             sampled_b = tf.nn.embedding_lookup(self.softmax_b, self.Y)
@@ -159,7 +161,7 @@ class GRU4Rec:
         data.sort([self.session_key, self.time_key], inplace=True)
         offset_sessions = np.zeros(data[self.session_key].nunique()+1, dtype=np.int32)
         offset_sessions[1:] = data.groupby(self.session_key).size().cumsum()
-        return offset_sessions
+        return np.array(zip(offset_sessions[:-1], offset_sessions[1:]))
     
     def fit(self, data):
         self.error_during_train = False
@@ -170,17 +172,18 @@ class GRU4Rec:
         data = pd.merge(data, pd.DataFrame({self.item_key:itemids, 'ItemIdx':self.itemidmap[itemids].values}), on=self.item_key, how='inner')
         offset_sessions = self.init(data)
         #print 'train_data:', data
-        #print 'offset_session:', offset_sessions
         print('fitting model...')
         for epoch in xrange(self.n_epochs):
+            np.random.shuffle(offset_sessions)
+            #print 'offset_session:', offset_sessions
             epoch_cost = []
             step, lr = 0, self.lr
             state = [np.zeros([self.batch_size, self.rnn_size], dtype=np.float32) for _ in xrange(self.layers)]
-            session_idx_arr = np.arange(len(offset_sessions)-1)
+            session_idx_arr = np.arange(len(offset_sessions))
             iters = np.arange(self.batch_size)
             maxiter = iters.max()
-            start = offset_sessions[session_idx_arr[iters]]
-            end = offset_sessions[session_idx_arr[iters]+1]
+            start = offset_sessions[session_idx_arr[iters]][:,0]
+            end = offset_sessions[session_idx_arr[iters]][:,1]
             finished = False
             while not finished:
                 minlen = (end-start).min()
@@ -207,13 +210,13 @@ class GRU4Rec:
                 for idx in mask:
                     maxiter += 1
                     #print 'maxiter, offset_sessions, session_idx_arr:', maxiter, offset_sessions, session_idx_arr
-                    if maxiter >= len(offset_sessions)-1:
+                    if maxiter >= len(offset_sessions):
                         #当训练样本不足一个batch,结束
                         finished = True
                         break
                     iters[idx] = maxiter
-                    start[idx] = offset_sessions[session_idx_arr[maxiter]]
-                    end[idx] = offset_sessions[session_idx_arr[maxiter]+1]
+                    start[idx] = offset_sessions[session_idx_arr[maxiter]][0]
+                    end[idx] = offset_sessions[session_idx_arr[maxiter]][1]
                 if len(mask) and self.reset_after_session:
                     for i in xrange(self.layers):
                         state[i][mask] = 0
@@ -229,11 +232,11 @@ class GRU4Rec:
             with open(os.path.join(self.checkpoint_path, 'embedding_%s' % epoch), 'w') as f:
                 item_embedding = self.sess.run(self.embedding)
                 for index, vec in enumerate(item_embedding.tolist()):
-                    print >>f, str(id2item[index]) + '\t' + '|'.join(map(str, vec))
+                    print >>f, str(id2item[index]) + '\t' + '|'.join(map(lambda x:'%.4f' % x, vec))
             with open(os.path.join(self.checkpoint_path, 'w_%s' % epoch), 'w') as f:
                 w = self.sess.run(self.softmax_W)
                 for index, vec in enumerate(w.tolist()):
-                    print >>f, str(id2item[index]) + '\t' + '|'.join(map(str, vec))
+                    print >>f, str(id2item[index]) + '\t' + '|'.join(map(lambda x:'%.4f' % x, vec))
 
     
     def predict_next_batch(self, session_ids, input_item_ids, itemidmap, batch=50):
