@@ -32,6 +32,7 @@ class Args():
     grad_cap = 0
     test_model = 2
     checkpoint_path = './data/checkpoint'
+    serving_path = './data/exported'
     loss = 'cross-entropy'
     final_act = 'softmax'
     hidden_act = 'tanh'
@@ -47,6 +48,7 @@ def parseArgs():
     parser.add_argument('--train_path', default='data/rsc15_train_full.txt.14', type=str)
     parser.add_argument('--test_path', default='data/rsc15_test.txt.8', type=str)
     parser.add_argument('--checkpoint_path', default='data/checkpoint', type=str)
+    parser.add_argument('--serving_path', default='data/exported', type=str)
     parser.add_argument('--epoch', default=3, type=int)
     parser.add_argument('--lr', default=0.001, type=float)
     parser.add_argument('--train', default=1, type=int)
@@ -71,6 +73,7 @@ if __name__ == '__main__':
     args.batch_size = command_line.batch
     args.seed = command_line.seed
     args.checkpoint_path = command_line.checkpoint_path
+    args.serving_path = command_line.serving_path
     args.n_epochs = command_line.epoch
     args.learning_rate = command_line.lr
     args.is_training = command_line.train

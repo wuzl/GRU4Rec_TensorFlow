@@ -22,7 +22,7 @@ Get dataset
 Train/Test file should consists of three columns:   
 
      First column: SessionId  
-     Second column: ItemId  
+     Second column: ItemId  (start from 0 to the num of items)
      Third column: Timestamps
 
 To train a model with default parameter settings:
@@ -44,7 +44,7 @@ To train a model with default parameter settings:
 To evaluate a trained model:
 
     $ python main.py --size 3 --batch 2 --top 3 --train 0 --test 99  --train_path data/rsc15_train_full.txt.14 --test_path data/rsc15_test.txt.8
-    $ python main.py --layer 2 --size 200 --batch 100 --top 50 --train 0 --test 24 --train_path data/UT.train.seq.csv --test_path data/UT.test.seq.csv --checkpoint_path data/checkpoint
+    $ python main.py --layer 2 --size 200 --batch 100 --top 50 --train 0 --test 24 --train_path data/UT.train.seq.csv --test_path data/UT.test.seq.csv --checkpoint_path data/checkpoint --serving_path data/exported
     
     One optional parameter is:    
      --test: Specify which saved model to evaluate(only used when --train is 0). Default is 2.

@@ -35,10 +35,6 @@ def evaluate_sessions_batch(model, train_data, test_data, cut_off=20, batch_size
    
     '''
     model.predict = False
-    # Build itemidmap from train data.
-    itemids = train_data[item_key].unique()
-    itemidmap = pd.Series(data=np.arange(len(itemids)), index=itemids)
-    #print 'itemids, itemidmap:', itemids, itemidmap
     
     test_data.sort([session_key, time_key], inplace=True)
     offset_sessions = np.zeros(test_data[session_key].nunique()+1, dtype=np.int32)
@@ -69,7 +65,7 @@ def evaluate_sessions_batch(model, train_data, test_data, cut_off=20, batch_size
         #print 'start, start_valid, end, minlen, in_idx:',start, start_valid, end, minlen, in_idx
         for i in xrange(minlen-1):
             out_idx[valid_mask] = test_data[item_key].values[start_valid+i+1]
-            preds = model.predict_next_batch(iters, in_idx, itemidmap, batch_size)
+            preds = model.predict_next_batch(iters, in_idx, batch_size)
             preds.fillna(0, inplace=True)
             #print 'i_of_minlen, in, out, preds:', i, in_idx, out_idx, preds
             in_idx[valid_mask] = out_idx[valid_mask]

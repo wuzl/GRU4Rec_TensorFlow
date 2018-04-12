@@ -80,6 +80,29 @@ class GRU4Rec:
         if ckpt and ckpt.model_checkpoint_path:
             self.saver.restore(sess, '{}/gru-model-{}'.format(self.checkpoint_path, args.test_model))
 
+        import time
+        x_info = tf.saved_model.utils.build_tensor_info(self.X)
+        state_info = []
+        yhat_info = tf.saved_model.utils.build_tensor_info(self.yhat)
+        final_state_info = []
+        for i in range(self.layers):
+            state_info.append(tf.saved_model.utils.build_tensor_info(self.state[i]))
+            final_state_info.append(tf.saved_model.utils.build_tensor_info(self.final_state[i]))
+        prediction_signature = (
+            tf.saved_model.signature_def_utils.build_signature_def(
+                inputs = dict([('X', x_info)] + [('state%s' % i, state_info[i]) for i in range(self.layers)]),
+                outputs=dict([('yhat', yhat_info)] + [('final_state%s' % i, final_state_info[i]) for i in range(self.layers)]),
+                method_name=tf.saved_model.signature_constants.PREDICT_METHOD_NAME)
+        )
+        builder = tf.saved_model.builder.SavedModelBuilder(os.path.join(args.serving_path, '%.0f' % time.time()))
+        builder.add_meta_graph_and_variables(
+            sess, [tf.saved_model.tag_constants.SERVING],
+            signature_def_map={
+                'predict': prediction_signature,
+            },
+        )
+        builder.save()
+
     ########################ACTIVATION FUNCTIONS#########################
     def linear(self, X):
         return X
@@ -165,11 +188,6 @@ class GRU4Rec:
     
     def fit(self, data):
         self.error_during_train = False
-        itemids = data[self.item_key].unique()
-        self.n_items = len(itemids)
-        self.itemidmap = pd.Series(data=np.arange(self.n_items), index=itemids)
-        #print 'itemids, itemidmap:', zip(itemids, self.itemidmap)
-        data = pd.merge(data, pd.DataFrame({self.item_key:itemids, 'ItemIdx':self.itemidmap[itemids].values}), on=self.item_key, how='inner')
         offset_sessions = self.init(data)
         #print 'train_data:', data
         print('fitting model...')
@@ -187,11 +205,11 @@ class GRU4Rec:
             finished = False
             while not finished:
                 minlen = (end-start).min()
-                out_idx = data.ItemIdx.values[start]
+                out_idx = data[self.item_key].values[start]
                 #print 'start, end, minlen:', start, end, minlen
                 for i in range(minlen-1):
                     in_idx = out_idx
-                    out_idx = data.ItemIdx.values[start+i+1]
+                    out_idx = data[self.item_key].values[start+i+1]
                     # prepare inputs, targeted outputs and hidden states
                     fetches = [self.cost, self.final_state, self.global_step, self.lr, self.train_op]
                     feed_dict = {self.X: in_idx, self.Y: out_idx}
@@ -228,18 +246,17 @@ class GRU4Rec:
                 return
             print('Epoch {}\tStep {}\tlr: {:.6f}\tloss: {:.6f}'.format(epoch, step, lr, avgc))
             self.saver.save(self.sess, '{}/gru-model'.format(self.checkpoint_path), global_step=epoch)
-            id2item = dict(zip(self.itemidmap, itemids))
             with open(os.path.join(self.checkpoint_path, 'embedding_%s' % epoch), 'w') as f:
                 item_embedding = self.sess.run(self.embedding)
                 for index, vec in enumerate(item_embedding.tolist()):
-                    print >>f, str(id2item[index]) + '\t' + '|'.join(map(lambda x:'%.4f' % x, vec))
+                    print >>f, str(index) + '\t' + '|'.join(map(lambda x:'%.4f' % x, vec))
             with open(os.path.join(self.checkpoint_path, 'w_%s' % epoch), 'w') as f:
                 w = self.sess.run(self.softmax_W)
                 for index, vec in enumerate(w.tolist()):
-                    print >>f, str(id2item[index]) + '\t' + '|'.join(map(lambda x:'%.4f' % x, vec))
+                    print >>f, str(index) + '\t' + '|'.join(map(lambda x:'%.4f' % x, vec))
 
     
-    def predict_next_batch(self, session_ids, input_item_ids, itemidmap, batch=50):
+    def predict_next_batch(self, session_ids, input_item_ids, batch=50):
         '''
         Gives predicton scores for a selected set of items. Can be used in batch mode to predict for multiple independent events (i.e. events of different sessions) at once and thus speed up evaluation.
 
@@ -274,11 +291,10 @@ class GRU4Rec:
                 self.predict_state[i][session_change] = 0.0
             self.current_session=session_ids.copy()
 
-        in_idxs = itemidmap[input_item_ids]
         fetches = [self.yhat, self.final_state]
-        feed_dict = {self.X: in_idxs}
+        feed_dict = {self.X: input_item_ids}
         for i in xrange(self.layers):
             feed_dict[self.state[i]] = self.predict_state[i]
         preds, self.predict_state = self.sess.run(fetches, feed_dict)
         preds = np.asarray(preds).T
-        return pd.DataFrame(data=preds, index=itemidmap.index)
+        return pd.DataFrame(data=preds)
