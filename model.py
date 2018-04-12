@@ -197,11 +197,10 @@ class GRU4Rec:
             epoch_cost = []
             step, lr = 0, self.lr
             state = [np.zeros([self.batch_size, self.rnn_size], dtype=np.float32) for _ in xrange(self.layers)]
-            session_idx_arr = np.arange(len(offset_sessions))
             iters = np.arange(self.batch_size)
             maxiter = iters.max()
-            start = offset_sessions[session_idx_arr[iters]][:,0]
-            end = offset_sessions[session_idx_arr[iters]][:,1]
+            start = offset_sessions[iters][:,0]
+            end = offset_sessions[iters][:,1]
             finished = False
             while not finished:
                 minlen = (end-start).min()
@@ -227,14 +226,14 @@ class GRU4Rec:
                 #print 'start, end, mask:', start, end, mask
                 for idx in mask:
                     maxiter += 1
-                    #print 'maxiter, offset_sessions, session_idx_arr:', maxiter, offset_sessions, session_idx_arr
+                    #print 'maxiter, offset_sessions:', maxiter, offset_sessions
                     if maxiter >= len(offset_sessions):
                         #当训练样本不足一个batch,结束
                         finished = True
                         break
                     iters[idx] = maxiter
-                    start[idx] = offset_sessions[session_idx_arr[maxiter]][0]
-                    end[idx] = offset_sessions[session_idx_arr[maxiter]][1]
+                    start[idx] = offset_sessions[maxiter][0]
+                    end[idx] = offset_sessions[maxiter][1]
                 if len(mask) and self.reset_after_session:
                     for i in xrange(self.layers):
                         state[i][mask] = 0

@@ -39,22 +39,24 @@ def evaluate_sessions_batch(model, train_data, test_data, cut_off=20, batch_size
     test_data.sort([session_key, time_key], inplace=True)
     offset_sessions = np.zeros(test_data[session_key].nunique()+1, dtype=np.int32)
     offset_sessions[1:] = test_data.groupby(session_key).size().cumsum()
+    start_end = np.array(zip(offset_sessions[:-1], offset_sessions[1:]))
     session2items = {k: set(g['ItemId'].values) for k,g in test_data.groupby(session_key)}
     evalutation_point_count = 0
     mrr, precision = 0.0, 0.0
-    if len(offset_sessions) - 1 < batch_size:
-        batch_size = len(offset_sessions) - 1
-    iters = np.arange(batch_size).astype(np.int32)
+    if len(start_end) < batch_size:
+        batch_size = len(start_end)
+    iters = np.arange(batch_size)
     maxiter = iters.max()
-    start = offset_sessions[iters]
-    end = offset_sessions[iters+1]
-    in_idx = np.zeros(batch_size, dtype=np.int32)
-    out_idx = np.zeros(batch_size, dtype=np.int32)
-    np.random.seed(42)
+    start = start_end[iters][:, 0]
+    end = start_end[iters][:, 1]
+    in_idx = np.array([-1] * batch_size, dtype=np.int32)
+    out_idx = np.array([-1] * batch_size, dtype=np.int32)
     #print 'item_list:', itemids
     #print 'test_data:', test_data
-    #print 'offset_sessions:', offset_sessions
+    #print 'start_end:', start_end
     while True:
+        # 预测允许一个batch不全是可用的样本, 因为预测不进行采样，而是计算softmax，所以不会像训练那样loss依赖于整个batch
+        # train的时候对样本进行shuffle,所以缺失最后的不够一个batch的样本对结果影响不大
         valid_mask = iters >= 0
         #print 'valid_mask, iters:', valid_mask, iters
         if valid_mask.sum() == 0:
@@ -94,10 +96,10 @@ def evaluate_sessions_batch(model, train_data, test_data, cut_off=20, batch_size
         #print 'start, mask:', start, mask
         for idx in mask:
             maxiter += 1
-            if maxiter >= len(offset_sessions)-1:
+            if maxiter >= len(start_end):
                 iters[idx] = -1
             else:
                 iters[idx] = maxiter
-                start[idx] = offset_sessions[maxiter]
-                end[idx] = offset_sessions[maxiter+1]
+                start[idx] = start_end[maxiter][0]
+                end[idx] = start_end[maxiter][1]
     return precision/evalutation_point_count, mrr/evalutation_point_count
