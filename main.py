@@ -24,7 +24,6 @@ class Args():
     decay_steps = 1e4
     sigma = 0
     init_as_normal = False
-    reset_after_session = True
     session_key = 'SessionId'
     item_key = 'ItemId'
     time_key = 'Time'
@@ -62,11 +61,11 @@ def parseArgs():
 
 if __name__ == '__main__':
     command_line = parseArgs()
-    data = pd.read_csv(command_line.train_path, sep='\t', dtype={'ItemId': np.int64})
-    valid = pd.read_csv(command_line.test_path, sep='\t', dtype={'ItemId': np.int64})
     top = command_line.top
     args = Args()
-    args.n_items = len(data['ItemId'].unique())
+    data = pd.read_csv(command_line.train_path, sep='\t', dtype={args.item_key: np.int64})
+    valid = pd.read_csv(command_line.test_path, sep='\t', dtype={args.item_key: np.int64})
+    args.n_items = len(data[args.item_key].unique())
     args.layers = command_line.layer
     args.rnn_size = command_line.size
     args.batch_size = command_line.batch
@@ -81,7 +80,7 @@ if __name__ == '__main__':
     args.final_act = command_line.final_act
     args.loss = command_line.loss
     args.dropout_p_hidden = 1.0 if args.is_training == 0 else command_line.dropout
-    print(args.dropout_p_hidden)
+    print args.__dict__
     if not os.path.exists(args.checkpoint_path):
         os.mkdir(args.checkpoint_path)
     gpu_config = tf.ConfigProto()

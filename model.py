@@ -25,7 +25,6 @@ class GRU4Rec:
         self.decay_steps = args.decay_steps
         self.sigma = args.sigma
         self.init_as_normal = args.init_as_normal
-        self.reset_after_session = args.reset_after_session
         self.session_key = args.session_key
         self.item_key = args.item_key
         self.time_key = args.time_key
@@ -180,24 +179,23 @@ class GRU4Rec:
 
     def init(self, data):
         data.sort([self.session_key, self.time_key], inplace=True)
-        offset_sessions = np.zeros(data[self.session_key].nunique()+1, dtype=np.int32)
+        offset_sessions = np.zeros(data[self.session_key].nunique()+1, dtype=np.int64)
         offset_sessions[1:] = data.groupby(self.session_key).size().cumsum()
         return np.array(zip(offset_sessions[:-1], offset_sessions[1:]))
     
     def fit(self, data):
-        offset_sessions = self.init(data)
         #print 'train_data:', data
-        print('fitting model...')
+        offset_sessions = self.init(data)
+        self.batch_size = min(self.batch_size, len(offset_sessions))
         for epoch in xrange(self.n_epochs):
             np.random.shuffle(offset_sessions)
             #print 'offset_session:', offset_sessions
-            epoch_cost = []
-            step, lr = 0, self.lr
-            state = [np.zeros([self.batch_size, self.rnn_size], dtype=np.float32) for _ in xrange(self.layers)]
+            epoch_cost, step, lr = [], 0, self.lr
             iters = np.arange(self.batch_size)
             maxiter = iters.max()
             start = offset_sessions[iters][:,0]
             end = offset_sessions[iters][:,1]
+            state = [np.zeros([self.batch_size, self.rnn_size], dtype=np.float32) for _ in xrange(self.layers)]
             finished = False
             while not finished:
                 minlen = (end-start).min()
@@ -230,7 +228,7 @@ class GRU4Rec:
                     iters[idx] = maxiter
                     start[idx] = offset_sessions[maxiter][0]
                     end[idx] = offset_sessions[maxiter][1]
-                if len(mask) and self.reset_after_session:
+                if len(mask):
                     for i in xrange(self.layers):
                         state[i][mask] = 0
             
@@ -251,22 +249,19 @@ class GRU4Rec:
 
 
     def evaluate(self, data, cut_off=20, filter_history=True):
+        #print 'data:', data
         offset_sessions = self.init(data)
-        session2items = {k: set(g[self.item_key].values) for k,g in data.groupby(self.session_key)}
-        evalutation_point_count = 0
-        mrr, precision = 0.0, 0.0
         self.batch_size = min(self.batch_size, len(offset_sessions))
+        #print 'offset_sessions:', offset_sessions
+        session2items = {k: set(g[self.item_key].values) for k,g in data.groupby(self.session_key)}
+        evalutation_point_count, mrr, precision = 0, 0.0, 0.0
         iters = np.arange(self.batch_size)
         maxiter = iters.max()
         start = offset_sessions[iters][:, 0]
         end = offset_sessions[iters][:, 1]
-        in_idx = np.array([-1] * self.batch_size, dtype=np.int32)
-        out_idx = np.array([-1] * self.batch_size, dtype=np.int32)
-        current_session = np.array([-1] * self.batch_size, dtype=np.int32)
-        # use self.predict_state to hold hidden states during prediction.
-        predict_state = [np.zeros([self.batch_size, self.rnn_size], dtype=np.float32) for _ in xrange(self.layers)]
-        #print 'data:', data
-        #print 'offset_sessions:', offset_sessions
+        in_idx = np.array([-1] * self.batch_size, dtype=np.int64)
+        out_idx = np.array([-1] * self.batch_size, dtype=np.int64)
+        state = [np.zeros([self.batch_size, self.rnn_size], dtype=np.float32) for _ in xrange(self.layers)]
         while True:
             # 预测允许一个batch不全是可用的样本, 因为预测不进行采样，而是计算softmax，所以不会像训练那样loss依赖于整个batch
             # train的时候对样本进行shuffle,所以缺失最后的不够一个batch的样本对结果影响不大
@@ -278,18 +273,13 @@ class GRU4Rec:
             minlen = (end[valid_mask]-start_valid).min()
             in_idx[valid_mask] = data[self.item_key].values[start_valid]
             #print 'start, start_valid, end, minlen, in_idx:',start, start_valid, end, minlen, in_idx
-            session_change = np.arange(self.batch_size)[iters != current_session]
-            if len(session_change) > 0:
-                for i in xrange(self.layers):
-                    predict_state[i][session_change] = 0.0
-                current_session=iters.copy()
             for i in xrange(minlen-1):
                 out_idx[valid_mask] = data[self.item_key].values[start_valid+i+1]
                 fetches = [self.yhat, self.final_state]
                 feed_dict = {self.X: in_idx}
-                for _i in xrange(self.layers):
-                    feed_dict[self.state[_i]] = predict_state[_i]
-                preds, predict_state = self.sess.run(fetches, feed_dict)
+                for j in xrange(self.layers):
+                    feed_dict[self.state[j]] = state[j]
+                preds, state = self.sess.run(fetches, feed_dict)
                 preds = pd.DataFrame(data=np.asarray(preds).T)
                 preds.fillna(0, inplace=True)
                 #print 'i_of_minlen, in, out, preds:', i, in_idx, out_idx, preds
@@ -325,4 +315,7 @@ class GRU4Rec:
                     iters[idx] = maxiter
                     start[idx] = offset_sessions[maxiter][0]
                     end[idx] = offset_sessions[maxiter][1]
+            if len(mask):
+                for i in xrange(self.layers):
+                    state[i][mask] = 0
         return precision/evalutation_point_count, mrr/evalutation_point_count
