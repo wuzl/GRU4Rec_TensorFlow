@@ -92,5 +92,5 @@ if __name__ == '__main__':
         if args.is_training:
             gru.fit(data)
         else:
-            res = evaluation.evaluate_sessions_batch(gru, data, valid, batch_size=args.batch_size, cut_off=top)
+            res = gru.evaluate(valid, cut_off=top)
             print('Precision@{}: {}\tMRR@{}: {}'.format(top, res[0], top, res[1]))

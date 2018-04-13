@@ -187,7 +187,6 @@ class GRU4Rec:
         return np.array(zip(offset_sessions[:-1], offset_sessions[1:]))
     
     def fit(self, data):
-        self.error_during_train = False
         offset_sessions = self.init(data)
         #print 'train_data:', data
         print('fitting model...')
@@ -219,7 +218,6 @@ class GRU4Rec:
                     #print 'i_of_minlen, in, out, cost:', i, in_idx, out_idx, cost
                     if np.isnan(cost):
                         print(str(epoch) + ':Nan error!')
-                        self.error_during_train = True
                         return
                 start = start+minlen-1
                 mask = np.arange(len(iters))[(end-start)<=1]
@@ -241,7 +239,6 @@ class GRU4Rec:
             avgc = np.mean(epoch_cost)
             if np.isnan(avgc):
                 print('Epoch {}: Nan error!'.format(epoch, avgc))
-                self.error_during_train = True
                 return
             print('Epoch {}\tStep {}\tlr: {:.6f}\tloss: {:.6f}'.format(epoch, step, lr, avgc))
             self.saver.save(self.sess, '{}/gru-model'.format(self.checkpoint_path), global_step=epoch)
@@ -297,3 +294,69 @@ class GRU4Rec:
         preds, self.predict_state = self.sess.run(fetches, feed_dict)
         preds = np.asarray(preds).T
         return pd.DataFrame(data=preds)
+
+
+    def evaluate(self, data, cut_off=20, filter_history=True):
+        self.predict = False
+        offset_sessions = self.init(data)
+        session2items = {k: set(g['ItemId'].values) for k,g in data.groupby(self.session_key)}
+        evalutation_point_count = 0
+        mrr, precision = 0.0, 0.0
+        self.batch_size = min(self.batch_size, len(offset_sessions))
+        iters = np.arange(self.batch_size)
+        maxiter = iters.max()
+        start = offset_sessions[iters][:, 0]
+        end = offset_sessions[iters][:, 1]
+        in_idx = np.array([-1] * self.batch_size, dtype=np.int32)
+        out_idx = np.array([-1] * self.batch_size, dtype=np.int32)
+        #print 'data:', data
+        #print 'offset_sessions:', offset_sessions
+        while True:
+            # 预测允许一个batch不全是可用的样本, 因为预测不进行采样，而是计算softmax，所以不会像训练那样loss依赖于整个batch
+            # train的时候对样本进行shuffle,所以缺失最后的不够一个batch的样本对结果影响不大
+            valid_mask = iters >= 0
+            #print 'valid_mask, iters:', valid_mask, iters
+            if valid_mask.sum() == 0:
+                break
+            start_valid = start[valid_mask]
+            minlen = (end[valid_mask]-start_valid).min()
+            in_idx[valid_mask] = data[self.item_key].values[start_valid]
+            #print 'start, start_valid, end, minlen, in_idx:',start, start_valid, end, minlen, in_idx
+            for i in xrange(minlen-1):
+                out_idx[valid_mask] = data[self.item_key].values[start_valid+i+1]
+                preds = self.predict_next_batch(iters, in_idx, self.batch_size)
+                preds.fillna(0, inplace=True)
+                #print 'i_of_minlen, in, out, preds:', i, in_idx, out_idx, preds
+                in_idx[valid_mask] = out_idx[valid_mask]
+                ranks = (preds.values.T[valid_mask].T > np.diag(preds.ix[in_idx].values)[valid_mask]).sum(axis=0) + 1
+                ranks_mask = (end[valid_mask] - start[valid_mask] - i - 1<=1)
+                final_session = data.SessionId.values[start[valid_mask]][ranks_mask]
+                out_value = out_idx[valid_mask][ranks_mask]
+                final_pred = preds[preds.columns.values[valid_mask][ranks_mask]]
+                for _i in range(len(final_session)):
+                    item2score = sorted(zip(final_pred.index.values, final_pred[final_pred.columns[_i]].values), key=lambda x:x[1], reverse=True)
+                    #print final_session[_i], item2score, session2items[final_session[_i]], out_value[_i], cut_off
+                    top = 1
+                    for k, v in item2score:
+                        if top == cut_off:
+                            break
+                        if k == out_value[_i]:
+                            precision += 1.0
+                            mrr += 1.0 / top
+                        elif k in session2items[final_session[_i]] and filter_history:
+                            continue
+                        top += 1
+                    evalutation_point_count += 1
+                    #print 'precision, mrr, evalutation_point_count, maxiter:', precision, mrr, evalutation_point_count, maxiter
+            start = start+minlen-1
+            mask = np.arange(len(iters))[(valid_mask) & (end-start<=1)]
+            #print 'start, mask:', start, mask
+            for idx in mask:
+                maxiter += 1
+                if maxiter >= len(offset_sessions):
+                    iters[idx] = -1
+                else:
+                    iters[idx] = maxiter
+                    start[idx] = offset_sessions[maxiter][0]
+                    end[idx] = offset_sessions[maxiter][1]
+        return precision/evalutation_point_count, mrr/evalutation_point_count
