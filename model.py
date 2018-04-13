@@ -74,8 +74,6 @@ class GRU4Rec:
         if self.is_training:
             return
 
-        # use self.predict_state to hold hidden states during prediction. 
-        self.predict_state = [np.zeros([self.batch_size, self.rnn_size], dtype=np.float32) for _ in xrange(self.layers)]
         ckpt = tf.train.get_checkpoint_state(self.checkpoint_path)
         if ckpt and ckpt.model_checkpoint_path:
             self.saver.restore(sess, '{}/gru-model-{}'.format(self.checkpoint_path, args.test_model))
@@ -251,55 +249,10 @@ class GRU4Rec:
                 for index, vec in enumerate(w.tolist()):
                     print >>f, str(index) + '\t' + '|'.join(map(lambda x:'%.4f' % x, vec))
 
-    
-    def predict_next_batch(self, session_ids, input_item_ids, batch=50):
-        '''
-        Gives predicton scores for a selected set of items. Can be used in batch mode to predict for multiple independent events (i.e. events of different sessions) at once and thus speed up evaluation.
-
-        If the session ID at a given coordinate of the session_ids parameter remains the same during subsequent calls of the function, the corresponding hidden state of the network will be kept intact (i.e. that's how one can predict an item to a session).
-        If it changes, the hidden state of the network is reset to zeros.
-
-        Parameters
-        --------
-        session_ids : 1D array
-            Contains the session IDs of the events of the batch. Its length must equal to the prediction batch size (batch param).
-        input_item_ids : 1D array
-            Contains the item IDs of the events of the batch. Every item ID must be must be in the training data of the network. Its length must equal to the prediction batch size (batch param).
-        batch : int
-            Prediction batch size.
-
-        Returns
-        --------
-        out : pandas.DataFrame
-            Prediction scores for selected items for every event of the batch.
-            Columns: events of the batch; rows: items. Rows are indexed by the item IDs.
-
-        '''
-        if batch != self.batch_size:
-            raise Exception('Predict batch size({}) must match train batch size({})'.format(batch, self.batch_size))
-        if not self.predict:
-            self.current_session = np.ones(batch) * -1 
-            self.predict = True
-        
-        session_change = np.arange(batch)[session_ids != self.current_session]
-        if len(session_change) > 0: # change internal states with session changes
-            for i in xrange(self.layers):
-                self.predict_state[i][session_change] = 0.0
-            self.current_session=session_ids.copy()
-
-        fetches = [self.yhat, self.final_state]
-        feed_dict = {self.X: input_item_ids}
-        for i in xrange(self.layers):
-            feed_dict[self.state[i]] = self.predict_state[i]
-        preds, self.predict_state = self.sess.run(fetches, feed_dict)
-        preds = np.asarray(preds).T
-        return pd.DataFrame(data=preds)
-
 
     def evaluate(self, data, cut_off=20, filter_history=True):
-        self.predict = False
         offset_sessions = self.init(data)
-        session2items = {k: set(g['ItemId'].values) for k,g in data.groupby(self.session_key)}
+        session2items = {k: set(g[self.item_key].values) for k,g in data.groupby(self.session_key)}
         evalutation_point_count = 0
         mrr, precision = 0.0, 0.0
         self.batch_size = min(self.batch_size, len(offset_sessions))
@@ -309,6 +262,9 @@ class GRU4Rec:
         end = offset_sessions[iters][:, 1]
         in_idx = np.array([-1] * self.batch_size, dtype=np.int32)
         out_idx = np.array([-1] * self.batch_size, dtype=np.int32)
+        current_session = np.array([-1] * self.batch_size, dtype=np.int32)
+        # use self.predict_state to hold hidden states during prediction.
+        predict_state = [np.zeros([self.batch_size, self.rnn_size], dtype=np.float32) for _ in xrange(self.layers)]
         #print 'data:', data
         #print 'offset_sessions:', offset_sessions
         while True:
@@ -322,15 +278,25 @@ class GRU4Rec:
             minlen = (end[valid_mask]-start_valid).min()
             in_idx[valid_mask] = data[self.item_key].values[start_valid]
             #print 'start, start_valid, end, minlen, in_idx:',start, start_valid, end, minlen, in_idx
+            session_change = np.arange(self.batch_size)[iters != current_session]
+            if len(session_change) > 0:
+                for i in xrange(self.layers):
+                    predict_state[i][session_change] = 0.0
+                current_session=iters.copy()
             for i in xrange(minlen-1):
                 out_idx[valid_mask] = data[self.item_key].values[start_valid+i+1]
-                preds = self.predict_next_batch(iters, in_idx, self.batch_size)
+                fetches = [self.yhat, self.final_state]
+                feed_dict = {self.X: in_idx}
+                for _i in xrange(self.layers):
+                    feed_dict[self.state[_i]] = predict_state[_i]
+                preds, predict_state = self.sess.run(fetches, feed_dict)
+                preds = pd.DataFrame(data=np.asarray(preds).T)
                 preds.fillna(0, inplace=True)
                 #print 'i_of_minlen, in, out, preds:', i, in_idx, out_idx, preds
                 in_idx[valid_mask] = out_idx[valid_mask]
                 ranks = (preds.values.T[valid_mask].T > np.diag(preds.ix[in_idx].values)[valid_mask]).sum(axis=0) + 1
                 ranks_mask = (end[valid_mask] - start[valid_mask] - i - 1<=1)
-                final_session = data.SessionId.values[start[valid_mask]][ranks_mask]
+                final_session = data[self.session_key].values[start[valid_mask]][ranks_mask]
                 out_value = out_idx[valid_mask][ranks_mask]
                 final_pred = preds[preds.columns.values[valid_mask][ranks_mask]]
                 for _i in range(len(final_session)):

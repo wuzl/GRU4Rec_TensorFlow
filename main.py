@@ -10,7 +10,6 @@ import numpy as np
 import argparse
 
 import model
-import evaluation
 
 class Args():
     is_training = False
