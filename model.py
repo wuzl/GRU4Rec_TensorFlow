@@ -6,7 +6,6 @@ Created on Feb 26, 2017
 import os
 import tensorflow as tf
 from tensorflow.python.ops import rnn_cell
-import pandas as pd
 import numpy as np
 
 class GRU4Rec:
@@ -186,7 +185,6 @@ class GRU4Rec:
     def fit(self, data):
         #print 'train_data:', data
         offset_sessions = self.init(data)
-        self.batch_size = min(self.batch_size, len(offset_sessions))
         for epoch in xrange(self.n_epochs):
             np.random.shuffle(offset_sessions)
             #print 'offset_session:', offset_sessions
@@ -251,7 +249,6 @@ class GRU4Rec:
     def evaluate(self, data, cut_off=20, filter_history=True):
         #print 'data:', data
         offset_sessions = self.init(data)
-        self.batch_size = min(self.batch_size, len(offset_sessions))
         #print 'offset_sessions:', offset_sessions
         session2items = {k: set(g[self.item_key].values) for k,g in data.groupby(self.session_key)}
         evalutation_point_count, mrr, precision = 0, 0.0, 0.0
@@ -280,17 +277,15 @@ class GRU4Rec:
                 for j in xrange(self.layers):
                     feed_dict[self.state[j]] = state[j]
                 preds, state = self.sess.run(fetches, feed_dict)
-                preds = pd.DataFrame(data=np.asarray(preds).T)
-                preds.fillna(0, inplace=True)
                 #print 'i_of_minlen, in, out, preds:', i, in_idx, out_idx, preds
                 in_idx[valid_mask] = out_idx[valid_mask]
-                ranks = (preds.values.T[valid_mask].T > np.diag(preds.ix[in_idx].values)[valid_mask]).sum(axis=0) + 1
+                #ranks = (preds[valid_mask].T > np.diag(preds.T[in_idx])[valid_mask]).sum(axis=0) + 1
                 ranks_mask = (end[valid_mask] - start[valid_mask] - i - 1<=1)
                 final_session = data[self.session_key].values[start[valid_mask]][ranks_mask]
                 out_value = out_idx[valid_mask][ranks_mask]
-                final_pred = preds[preds.columns.values[valid_mask][ranks_mask]]
+                final_preds = preds[valid_mask][ranks_mask]
                 for _i in range(len(final_session)):
-                    item2score = sorted(zip(final_pred.index.values, final_pred[final_pred.columns[_i]].values), key=lambda x:x[1], reverse=True)
+                    item2score = sorted(zip(range(final_preds.shape[1]), final_preds[_i].tolist()), key=lambda x:x[1], reverse=True)
                     #print final_session[_i], item2score, session2items[final_session[_i]], out_value[_i], cut_off
                     top = 1
                     for k, v in item2score:

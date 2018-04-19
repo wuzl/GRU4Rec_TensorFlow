@@ -66,9 +66,10 @@ if __name__ == '__main__':
     data = pd.read_csv(command_line.train_path, sep='\t', dtype={args.item_key: np.int64})
     valid = pd.read_csv(command_line.test_path, sep='\t', dtype={args.item_key: np.int64})
     args.n_items = len(data[args.item_key].unique())
+    args.decay_steps = len(data)
     args.layers = command_line.layer
     args.rnn_size = command_line.size
-    args.batch_size = command_line.batch
+    args.batch_size = min(command_line.batch, len(valid)) if args.is_training == 0 else min(command_line.batch, len(data))
     args.seed = command_line.seed
     args.checkpoint_path = command_line.checkpoint_path
     args.serving_path = command_line.serving_path
@@ -90,5 +91,6 @@ if __name__ == '__main__':
         if args.is_training:
             gru.fit(data)
         else:
+            data = None
             res = gru.evaluate(valid, cut_off=top)
             print('Precision@{}: {}\tMRR@{}: {}'.format(top, res[0], top, res[1]))
