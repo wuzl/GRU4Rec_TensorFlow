@@ -20,7 +20,7 @@ class Args():
     seed = 13
     dropout_p_hidden=1
     learning_rate = 0.001
-    decay = 0.96
+    decay = 0.9
     decay_steps = 1e4
     sigma = 0
     init_as_normal = False
@@ -30,6 +30,7 @@ class Args():
     grad_cap = 0
     test_model = 2
     checkpoint_path = './data/checkpoint'
+    summary_path = './data/summary'
     serving_path = './data/exported'
     loss = 'cross-entropy'
     final_act = 'softmax'
@@ -46,9 +47,11 @@ def parseArgs():
     parser.add_argument('--train_path', default='data/rsc15_train_full.txt.14', type=str)
     parser.add_argument('--test_path', default='data/rsc15_test.txt.8', type=str)
     parser.add_argument('--checkpoint_path', default='data/checkpoint', type=str)
+    parser.add_argument('--summary_path', default='data/summary', type=str)
     parser.add_argument('--serving_path', default='data/exported', type=str)
     parser.add_argument('--epoch', default=3, type=int)
     parser.add_argument('--lr', default=0.001, type=float)
+    parser.add_argument('--decay', default=0.9, type=float)
     parser.add_argument('--train', default=1, type=int)
     parser.add_argument('--test', default=2, type=int)
     parser.add_argument('--hidden_act', default='tanh', type=str)
@@ -66,15 +69,17 @@ if __name__ == '__main__':
     data = pd.read_csv(command_line.train_path, sep='\t', dtype={args.item_key: np.int64})
     valid = pd.read_csv(command_line.test_path, sep='\t', dtype={args.item_key: np.int64})
     args.n_items = len(data[args.item_key].unique())
-    args.decay_steps = len(data)
     args.layers = command_line.layer
     args.rnn_size = command_line.size
     args.batch_size = min(command_line.batch, len(valid)) if args.is_training == 0 else min(command_line.batch, len(data))
     args.seed = command_line.seed
     args.checkpoint_path = command_line.checkpoint_path
+    args.summary_path = command_line.summary_path
     args.serving_path = command_line.serving_path
     args.n_epochs = command_line.epoch
     args.learning_rate = command_line.lr
+    args.decay = command_line.decay
+    args.decay_steps = len(data) / args.batch_size
     args.is_training = command_line.train
     args.test_model = command_line.test
     args.hidden_act = command_line.hidden_act
@@ -82,8 +87,9 @@ if __name__ == '__main__':
     args.loss = command_line.loss
     args.dropout_p_hidden = 1.0 if args.is_training == 0 else command_line.dropout
     print args.__dict__
-    if not os.path.exists(args.checkpoint_path):
-        os.mkdir(args.checkpoint_path)
+    for path in [args.checkpoint_path, args.summary_path, args.summary_path]:
+        if not os.path.exists(path):
+            os.mkdir(path)
     gpu_config = tf.ConfigProto()
     gpu_config.gpu_options.allow_growth = True
     with tf.Session(config=gpu_config) as sess:

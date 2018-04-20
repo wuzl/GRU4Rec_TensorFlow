@@ -7,6 +7,7 @@ import os
 import tensorflow as tf
 from tensorflow.python.ops import rnn_cell
 import numpy as np
+import time
 
 class GRU4Rec:
     def __init__(self, sess, args):
@@ -62,21 +63,20 @@ class GRU4Rec:
             raise NotImplementedError
 
         self.checkpoint_path = args.checkpoint_path
-        if not os.path.isdir(self.checkpoint_path):
-            raise Exception("[!] Checkpoint Dir not found")
 
         self.build_model()
         self.sess.run(tf.global_variables_initializer())
-        self.saver = tf.train.Saver(tf.global_variables(), max_to_keep=10)
+        self.saver = tf.train.Saver(tf.global_variables(), max_to_keep=self.n_epochs)
+        self.writer = tf.summary.FileWriter(args.summary_path, self.sess.graph)
+        self.builder = tf.saved_model.builder.SavedModelBuilder(os.path.join(args.serving_path, '%.0f' % time.time()))
 
         if self.is_training:
             return
 
         ckpt = tf.train.get_checkpoint_state(self.checkpoint_path)
         if ckpt and ckpt.model_checkpoint_path:
-            self.saver.restore(sess, '{}/gru-model-{}'.format(self.checkpoint_path, args.test_model))
+            self.saver.restore(self.sess, '{}/gru-model-{}'.format(self.checkpoint_path, args.test_model))
 
-        import time
         x_info = tf.saved_model.utils.build_tensor_info(self.X)
         state_info = []
         yhat_info = tf.saved_model.utils.build_tensor_info(self.yhat)
@@ -90,14 +90,13 @@ class GRU4Rec:
                 outputs=dict([('yhat', yhat_info)] + [('final_state%s' % i, final_state_info[i]) for i in range(self.layers)]),
                 method_name=tf.saved_model.signature_constants.PREDICT_METHOD_NAME)
         )
-        builder = tf.saved_model.builder.SavedModelBuilder(os.path.join(args.serving_path, '%.0f' % time.time()))
-        builder.add_meta_graph_and_variables(
-            sess, [tf.saved_model.tag_constants.SERVING],
+        self.builder.add_meta_graph_and_variables(
+            self.sess, [tf.saved_model.tag_constants.SERVING],
             signature_def_map={
                 'predict': prediction_signature,
             },
         )
-        builder.save()
+        self.builder.save()
 
     ########################ACTIVATION FUNCTIONS#########################
     def linear(self, X):
@@ -158,6 +157,7 @@ class GRU4Rec:
             logits = tf.matmul(output, sampled_W, transpose_b=True) + sampled_b
             self.yhat = self.final_activation(logits)
             self.cost = self.loss_function(self.yhat)
+            tf.summary.scalar('cost', self.cost)
         else:
             logits = tf.matmul(output, self.softmax_W, transpose_b=True) + self.softmax_b
             self.yhat = self.final_activation(logits)
@@ -165,7 +165,8 @@ class GRU4Rec:
         if not self.is_training:
             return
 
-        self.lr = tf.maximum(1e-5,tf.train.exponential_decay(self.learning_rate, self.global_step, self.decay_steps, self.decay, staircase=True)) 
+        self.lr = tf.maximum(1e-5,tf.train.exponential_decay(self.learning_rate, self.global_step, self.decay_steps, self.decay, staircase=True))
+        tf.summary.scalar('lr', self.lr)
         optimizer = tf.train.AdamOptimizer(self.lr)
 
         tvars = tf.trainable_variables()
@@ -175,6 +176,7 @@ class GRU4Rec:
         else:
             capped_gvs = gvs 
         self.train_op = optimizer.apply_gradients(capped_gvs, global_step=self.global_step)
+        self.sum_ops = tf.summary.merge_all()
 
     def init(self, data):
         data.sort([self.session_key, self.time_key], inplace=True)
@@ -188,7 +190,7 @@ class GRU4Rec:
         for epoch in xrange(self.n_epochs):
             np.random.shuffle(offset_sessions)
             #print 'offset_session:', offset_sessions
-            epoch_cost, step, lr = [], 0, self.lr
+            epoch_cost, cost, step, lr = [], 0, 0, self.lr
             iters = np.arange(self.batch_size)
             maxiter = iters.max()
             start = offset_sessions[iters][:,0]
@@ -203,11 +205,14 @@ class GRU4Rec:
                     in_idx = out_idx
                     out_idx = data[self.item_key].values[start+i+1]
                     # prepare inputs, targeted outputs and hidden states
-                    fetches = [self.cost, self.final_state, self.global_step, self.lr, self.train_op]
                     feed_dict = {self.X: in_idx, self.Y: out_idx}
                     for j in xrange(self.layers): 
                         feed_dict[self.state[j]] = state[j]
-                    cost, state, step, lr, _ = self.sess.run(fetches, feed_dict)
+                    if step % 100 == 0:
+                        cost, state, step, lr, _, summary = self.sess.run([self.cost, self.final_state, self.global_step, self.lr, self.train_op, self.sum_ops], feed_dict)
+                        self.writer.add_summary(summary, global_step=step)
+                    else:
+                        cost, state, step, lr, _ = self.sess.run([self.cost, self.final_state, self.global_step, self.lr, self.train_op], feed_dict)
                     epoch_cost.append(cost)
                     #print 'i_of_minlen, in, out, cost:', i, in_idx, out_idx, cost
                     if np.isnan(cost):
